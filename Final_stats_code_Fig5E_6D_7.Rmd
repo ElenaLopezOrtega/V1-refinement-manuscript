@@ -1,0 +1,120 @@
+---
+title: "Fig5-6-7"
+output: html_document
+date: "2024-02-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(lme4)
+library(lmerTest)
+library(dplyr)
+library(tidyr)
+library(glmnet)
+library(ggprism)
+
+```
+
+```{r Fig5E}
+df<- read.csv("dataset_2.csv")
+summary(df)
+
+df <- df %>% select(position, raw_AMPAR_d0, raw_AMPAR_d1, raw_AMPAR_d5, dendrite, cell, mouse, condition)
+names(df) <- c("position","ampa_d0", "ampa_d1", "ampa_d5", "dendrite_id", "neuron_id", "mouse_id", "condition")
+
+df$dendrite_id <- as.factor(df$dendrite_id)
+df$neuron_id <- as.factor(df$neuron_id)
+df$mouse_id <- as.factor(df$mouse_id)
+df$condition <- as.factor(df$condition)
+levels(df$condition) <- c("Stim","Control")
+df$spine_id <- c(1:nrow(df))
+df$spine_id <- as.factor(df$spine_id)
+df<- df %>% group_by(dendrite_id) %>% mutate(num_spine = n())
+df$change_ampa_1_0 <- df$ampa_d1 - df$ampa_d0
+df$change_ampa_5_1 <- df$ampa_d5 - df$ampa_d1
+
+stim_dendrite_id <- unique(subset(df, condition == "Stim")$dendrite_id)
+control_dendrite_id <- unique(subset(df, condition == "Control")$dendrite_id)
+
+dendrite_df <- df %>% group_by(condition, dendrite_id) %>% summarize(mean_change_ampa_1_0 = mean(change_ampa_1_0, na.rm=TRUE),mean_change_ampa_5_1 = mean(change_ampa_5_1, na.rm=TRUE), mean_ampa_d0=mean(ampa_d0, na.rm=TRUE),mean_ampa_d1=mean(ampa_d1, na.rm=TRUE), mean_ampa_d5=mean(ampa_d5, na.rm=TRUE))
+dendrite_df<- dendrite_df %>% ungroup() %>% group_by(condition) %>% mutate(dendrite_id2 = row_number(dendrite_id))
+dendrite_df <- dendrite_df[complete.cases(dendrite_df),]
+
+summary(lm(mean_change_ampa_5_1 ~ mean_ampa_d1*condition, data = dendrite_df))
+
+```
+
+
+```{r Fig6D}
+summary(lm(change_ampa_5_1 ~ ampa_d1*condition, data = df))
+```
+
+
+```{r Fig7, echo=FALSE}
+#Figure 7
+
+df<- read.csv("dataset_2.csv")
+summary(df)
+
+df <- df %>% select(position, raw_AMPAR_d1, raw_AMPAR_d5, dendrite, cell, mouse, condition)
+names(df) <- c("position", "ampa_d1", "ampa_d5", "dendrite_id", "neuron_id", "mouse_id", "condition")
+
+df$dendrite_id <- as.factor(df$dendrite_id)
+df$neuron_id <- as.factor(df$neuron_id)
+df$mouse_id <- as.factor(df$mouse_id)
+df$condition <- as.factor(df$condition)
+levels(df$condition) <- c("Stim","Control")
+df$spine_id <- c(1:nrow(df))
+df$spine_id <- as.factor(df$spine_id)
+df<- df %>% group_by(dendrite_id) %>% mutate(num_spine = n())
+df$change_ampa <- df$ampa_d5 - df$ampa_d1
+summary(df)
+stim_dendrite_id <- unique(subset(df, condition == "Stim")$dendrite_id)
+control_dendrite_id <- unique(subset(df, condition == "Control")$dendrite_id)
+
+spine_combinations <- data.frame()
+for(i in unique(df$dendrite_id)) {
+  current_kernel <- as.vector(df$spine_id[df$dendrite_id == i])
+  if(length(current_kernel) > 1) {
+    new_pairs <- t(combn(current_kernel, 2))
+    spine_combinations <- rbind(spine_combinations, new_pairs)
+  }
+}
+colnames(spine_combinations) <- c("spine_id", "pair_spine_id")
+
+new_df<- right_join(df, spine_combinations, by = "spine_id") %>% arrange(as.numeric(spine_id))
+new_df$spine_id <- as.factor(new_df$spine_id)
+new_df$pair_spine_id <- as.factor(new_df$pair_spine_id)
+
+tidbit <- df %>% ungroup() %>% select(spine_id, ampa_d1, ampa_d5, position)
+colnames(tidbit) <- c("pair_spine_id", "pair_ampa_d1", "pair_ampa_d5", "pair_position")
+
+new_df <- right_join(tidbit, new_df, by = "pair_spine_id") %>% arrange(as.numeric(spine_id))
+new_df$distance <- abs(new_df$position - new_df$pair_position)
+new_df$diff_ampa_d1 <- abs(new_df$ampa_d1 - new_df$pair_ampa_d1)
+new_df$diff_ampa_d5 <- abs(new_df$ampa_d5 - new_df$pair_ampa_d5)
+
+new_df$change_spine <- new_df$ampa_d5-new_df$ampa_d1
+new_df$change_pair_spine <- new_df$pair_ampa_d5-new_df$pair_ampa_d1
+new_df$direction <- ifelse(new_df$change_spine*new_df$change_pair_spine > 0, "same_direction_change", ifelse(new_df$change_spine*new_df$change_pair_spine < 0, "opposite_direction_change", "no_change"))
+new_df$direction <- as.factor(new_df$direction)
+new_df<-new_df[complete.cases(new_df),]
+
+
+new_df <- new_df %>% ungroup() %>% arrange(distance) %>% mutate(rank_distance = ifelse(distance < 2, "0-2", 
+                                                                                       (ifelse(distance < 4, "2-4",
+                                                                                               (ifelse(distance < 6, "4-6",
+                                                                                                       (ifelse(distance < 8, "6-8",
+                                                                                                               (ifelse(distance < 10, "8-10",
+                                                                                                                       (ifelse(distance < 15, "10-15",
+                                                                                                                               (ifelse(distance < 20, "15-20",
+                                                                                                                                       (ifelse(distance < 30, "20-30",
+                                                                                                                                               (ifelse(distance< 170, "30-max"
+                                                                                                                                               ))))))))))))))))))
+
+new_df$rank_distance <-factor(new_df$rank_distance, levels = c("0-2", "2-4", "4-6", "6-8", "8-10", "10-15","15-20", "20-30", "30-max"))
+
+model5<- lmer(change_spine ~ (change_pair_spine*condition*distance) + (1|dendrite_id), data = new_df)
+summary(model5)
+```
